@@ -3,105 +3,107 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>媒体下载 · Media Downloader</title>
+<title>媒体批量下载 · Media Downloader</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-    background: #0B0F17; color: #E5E7EB; min-height: 100vh;
-    padding: 40px 16px;
+    background: #0B0F17; color: #E5E7EB; min-height: 100vh; padding: 36px 16px;
   }
-  .wrap { max-width: 880px; margin: 0 auto; }
+  .wrap { max-width: 960px; margin: 0 auto; }
   h1 { font-size: 26px; font-weight: 700; margin-bottom: 6px; }
   h1 span { background: linear-gradient(90deg,#fff,#3B82F6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-  .sub { color: #8B94A7; font-size: 13px; margin-bottom: 28px; }
-  .box {
-    display: flex; gap: 10px; background: #131A26; border: 1px solid #1F2937;
-    border-radius: 12px; padding: 10px; margin-bottom: 18px;
+  .sub { color: #8B94A7; font-size: 13px; margin-bottom: 24px; }
+  textarea {
+    width: 100%; min-height: 130px; background: #131A26; border: 1px solid #1F2937;
+    border-radius: 12px; padding: 14px; color: #E5E7EB; font-size: 14px; line-height: 1.6;
+    resize: vertical; outline: none; font-family: inherit;
   }
-  input {
-    flex: 1; background: transparent; border: none; outline: none;
-    color: #E5E7EB; font-size: 15px; padding: 10px;
-  }
-  input::placeholder { color: #5A657A; }
+  textarea:focus { border-color: #3B82F6; }
+  textarea::placeholder { color: #5A657A; }
+  .bar { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
   button {
     background: #3B82F6; color: #fff; border: none; border-radius: 8px;
-    padding: 10px 22px; font-size: 15px; font-weight: 600; cursor: pointer;
-    transition: .15s; white-space: nowrap;
+    padding: 11px 26px; font-size: 15px; font-weight: 600; cursor: pointer; transition: .15s;
   }
   button:hover { background: #2563EB; }
   button:disabled { background: #374151; cursor: not-allowed; }
-  #status { font-size: 14px; color: #8B94A7; min-height: 20px; margin-bottom: 18px; }
+  .hint { color: #5A657A; font-size: 12px; }
+  #status { font-size: 14px; color: #8B94A7; min-height: 20px; margin: 16px 0; }
   #status.err { color: #F87171; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
-  .card {
-    background: #131A26; border: 1px solid #1F2937; border-radius: 12px;
-    overflow: hidden; display: flex; flex-direction: column;
-  }
-  .card img, .card video { width: 100%; display: block; background: #000; max-height: 420px; object-fit: contain; }
+  #status.ok { color: #34D399; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; }
+  .card { background: #131A26; border: 1px solid #1F2937; border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
+  .card img, .card video { width: 100%; display: block; background: #000; max-height: 380px; object-fit: contain; }
   .meta { padding: 10px 12px; display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #8B94A7; }
-  .dl {
-    color: #3B82F6; text-decoration: none; font-weight: 600;
-    border: 1px solid #3B82F6; border-radius: 6px; padding: 4px 12px; transition: .15s;
-  }
+  .dl { color: #3B82F6; text-decoration: none; font-weight: 600; border: 1px solid #3B82F6; border-radius: 6px; padding: 4px 12px; transition: .15s; }
   .dl:hover { background: #3B82F6; color: #fff; }
-  .spinner {
-    display: inline-block; width: 14px; height: 14px; border: 2px solid #3B82F6;
-    border-top-color: transparent; border-radius: 50%; animation: spin .7s linear infinite;
-    vertical-align: middle; margin-right: 8px;
-  }
+  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #3B82F6;
+    border-top-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; vertical-align: middle; margin-right: 8px; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  .tips { margin-top: 28px; font-size: 12px; color: #5A657A; line-height: 1.8; }
+  .errlist { margin-top: 18px; background: #1A1315; border: 1px solid #5A2630; border-radius: 10px; padding: 12px 16px; }
+  .errlist h3 { font-size: 13px; color: #F87171; margin-bottom: 8px; font-weight: 600; }
+  .errlist div { font-size: 12px; color: #B08A90; margin: 4px 0; word-break: break-all; }
+  .tips { margin-top: 26px; font-size: 12px; color: #5A657A; line-height: 1.8; }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>媒体<span>下载器</span></h1>
-  <div class="sub">支持 Twitter/X · Bluesky · YouTube · GIF/图片 · 走 clash 代理</div>
+  <h1>媒体<span>批量下载器</span></h1>
+  <div class="sub">支持 Twitter/X · Bluesky · YouTube · GIF/图片 — 多个链接一次性粘贴，自动识别拆分</div>
 
-  <div class="box">
-    <input id="url" placeholder="粘贴链接，如 https://x.com/xxx/status/123456" autofocus
-           onkeydown="if(event.key==='Enter')parse()">
-    <button id="btn" onclick="parse()">解析下载</button>
+  <textarea id="urls" placeholder="每行一个链接，或直接粘贴一大段（会自动识别其中的所有链接）
+例如：
+https://x.com/xxx/status/123456
+https://bsky.app/profile/xxx/post/abc
+https://youtu.be/xxxxx
+https://example.com/pic.jpg"></textarea>
+  <div class="bar">
+    <button id="btn" onclick="run()">批量解析下载</button>
+    <span class="hint">支持换行 / 空格 / 逗号分隔，自动去重</span>
   </div>
 
   <div id="status"></div>
   <div class="grid" id="results"></div>
+  <div id="errs"></div>
 
   <div class="tips">
-    · Twitter/X：自动处理引用转推、多图多视频，图片取高清<br>
-    · Bluesky：图片/视频全解析 · YouTube：yt-dlp 最高画质<br>
-    · 文件保存在服务器，点「下载」存到本机
+    · 自动拆分文本中的全部 http(s) 链接，逐个解析<br>
+    · Twitter/X（引用转推/多图/多视频）· Bluesky（图片/视频）· YouTube（yt-dlp 最高画质）<br>
+    · 图片高清 · 文件保存在服务器，点「下载」存到本机
   </div>
 </div>
 
 <script>
-async function parse() {
-  const url = document.getElementById('url').value.trim();
+async function run() {
+  const raw = document.getElementById('urls').value.trim();
   const btn = document.getElementById('btn');
   const status = document.getElementById('status');
   const results = document.getElementById('results');
-  if (!url) { status.textContent = '请输入链接'; status.className = 'err'; return; }
+  const errs = document.getElementById('errs');
+  if (!raw) { status.textContent = '请输入链接'; status.className = 'err'; return; }
 
   btn.disabled = true;
-  results.innerHTML = '';
+  results.innerHTML = ''; errs.innerHTML = '';
   status.className = '';
-  status.innerHTML = '<span class="spinner"></span>解析下载中，请稍候（视频可能较慢）...';
+  status.innerHTML = '<span class="spinner"></span>解析下载中，多链接/视频可能较慢，请稍候...';
 
   try {
     const res = await fetch('/api/parse', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({url})
+      body: JSON.stringify({urls: raw})
     });
     const data = await res.json();
     if (!data.ok) {
       status.textContent = '❌ ' + data.error;
       status.className = 'err';
+      if (data.errors) renderErrs(data.errors);
       return;
     }
-    status.textContent = `✅ 解析到 ${data.count} 个媒体`;
-    status.className = '';
+    status.textContent = `✅ 共 ${data.total_urls} 个链接 → 解析到 ${data.count} 个媒体` +
+                         (data.errors && data.errors.length ? `（${data.errors.length} 个失败）` : '');
+    status.className = 'ok';
     data.media.forEach(m => {
       const card = document.createElement('div');
       card.className = 'card';
@@ -116,12 +118,21 @@ async function parse() {
         </div>`;
       results.appendChild(card);
     });
+    if (data.errors && data.errors.length) renderErrs(data.errors);
   } catch (e) {
     status.textContent = '❌ 请求失败: ' + e;
     status.className = 'err';
   } finally {
     btn.disabled = false;
   }
+}
+
+function renderErrs(list) {
+  const box = document.getElementById('errs');
+  let html = '<div class="errlist"><h3>⚠️ 失败的链接</h3>';
+  list.forEach(e => { html += `<div>${e.url} — ${e.error}</div>`; });
+  html += '</div>';
+  box.innerHTML = html;
 }
 </script>
 </body>

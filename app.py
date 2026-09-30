@@ -229,18 +229,7 @@ def index():
     return render_template("index.html")
 
 
-@app.route("/api/parse", methods=["POST"])
-def api_parse():
-    data = request.get_json(silent=True) or {}
-    url = (data.get("url") or "").strip()
-    if not url:
-        return jsonify({"ok": False, "error": "请输入链接"})
-    try:
-        media = asyncio.run(parse_all(url))
-    except Exception as e:
-        return jsonify({"ok": False, "error": f"解析失败: {e}"})
-    if not media:
-        return jsonify({"ok": False, "error": "未解析到媒体（链接无效/无媒体/超限）"})
+def _fmt(media):
     out = []
     for m in media:
         out.append({
@@ -250,7 +239,37 @@ def api_parse():
             "view": f"/media/{m['file']}",
             "download": f"/media/{m['file']}?dl=1",
         })
-    return jsonify({"ok": True, "count": len(out), "media": out})
+    return out
+
+
+@app.route("/api/parse", methods=["POST"])
+def api_parse():
+    data = request.get_json(silent=True) or {}
+    raw = (data.get("urls") or data.get("url") or "").strip()
+    if not raw:
+        return jsonify({"ok": False, "error": "请输入链接"})
+    urls = re.findall(r"https?://[^\s,，、]+", raw)
+    seen = set(); uniq = []
+    for u in urls:
+        if u not in seen:
+            seen.add(u); uniq.append(u)
+    if not uniq:
+        return jsonify({"ok": False, "error": "未识别到有效链接"})
+    all_media = []
+    errors = []
+    for u in uniq:
+        try:
+            media = asyncio.run(parse_all(u))
+        except Exception as e:
+            errors.append({"url": u, "error": str(e)[:100]}); continue
+        if media:
+            all_media.extend(_fmt(media))
+        else:
+            errors.append({"url": u, "error": "未解析到媒体"})
+    if not all_media and errors:
+        return jsonify({"ok": False, "error": "全部解析失败", "errors": errors, "total": len(uniq)})
+    return jsonify({"ok": True, "count": len(all_media), "media": all_media,
+                    "total_urls": len(uniq), "errors": errors})
 
 
 @app.route("/media/<path:filename>")
