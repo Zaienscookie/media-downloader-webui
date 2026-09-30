@@ -15,6 +15,8 @@ from flask import Flask, request, jsonify, send_file, render_template
 app = Flask(__name__)
 
 PROXY = os.environ.get("MEDIA_PROXY", "http://127.0.0.1:7890")
+import shutil as _shutil
+YTDLP = _shutil.which("yt-dlp") or "/home/debug/qqbot/qqbot/new-zaiens/astrbot/.venv/bin/yt-dlp"
 DL_DIR = os.environ.get("MEDIA_DL_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), "downloads"))
 os.makedirs(DL_DIR, exist_ok=True)
 
@@ -114,18 +116,37 @@ async def parse_bluesky(session, url):
     embed = rec.get("embed", {}) or {}
     et = embed.get("$type", "")
     media = []
-    if et == "app.bsky.embed.images":
-        for img in embed.get("images", []):
+
+    def _add_images(emb):
+        for img in emb.get("images", []):
             blob = img.get("image", {})
             cid = blob.get("ref", {}).get("$link", "")
             ex = blob.get("mimeType", "image/jpeg").split("/")[-1]
             if cid:
                 media.append((f"https://cdn.bsky.app/img/feed_fullsize/plain/{did}/{cid}@{ex}", "image"))
-    elif et == "app.bsky.embed.video":
-        blob = embed.get("video", {})
+
+    def _add_video(emb):
+        blob = emb.get("video", {})
         cid = blob.get("ref", {}).get("$link", "")
         if cid:
-            media.append((f"https://cdn.bsky.app/img/feed_fullsize/plain/{did}/{cid}@mp4", "video"))
+            media.append((f"https://video.bsky.app/watch/{did}/{cid}/playlist.m3u8", "video"))
+
+    if et == "app.bsky.embed.images":
+        _add_images(embed)
+    elif et == "app.bsky.embed.video":
+        _add_video(embed)
+    elif et == "app.bsky.embed.recordWithMedia":
+        m2 = embed.get("media", {}) or {}
+        if m2.get("$type") == "app.bsky.embed.images":
+            _add_images(m2)
+        elif m2.get("$type") == "app.bsky.embed.video":
+            _add_video(m2)
+    elif et == "app.bsky.embed.external":
+        ext = embed.get("external", {}) or {}
+        thumb = ext.get("thumb", {})
+        cid = thumb.get("ref", {}).get("$link", "")
+        if cid:
+            media.append((f"https://cdn.bsky.app/img/feed_fullsize/plain/{did}/{cid}@jpeg", "image"))
     results = []
     for mu, th in media:
         info = await _download(session, mu, th)
@@ -138,7 +159,7 @@ async def parse_bluesky(session, url):
 async def parse_youtube(session, url):
     # 用 yt-dlp 下载
     out_tmpl = os.path.join(DL_DIR, f"yt_{uuid.uuid4().hex}.%(ext)s")
-    cmd = ["yt-dlp", "-f", "bv*+ba/b", "--merge-output-format", "mp4", "-o", out_tmpl,
+    cmd = [YTDLP, "-f", "bv*+ba/b", "--merge-output-format", "mp4", "-o", out_tmpl,
            "--no-playlist", "--max-filesize", f"{MAX_MB}M", "--proxy", PROXY, url]
     proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
     await asyncio.wait_for(proc.communicate(), timeout=600)
@@ -157,12 +178,23 @@ async def parse_all(url):
             return await parse_bluesky(s, url)
         if re.search(r"(?:youtube\.com|youtu\.be)/", url):
             return await parse_youtube(s, url)
-        # 通用图片/GIF
-        if re.search(r"\.(?:gif|jpe?g|png|webp)(?:\?|$)", url, re.I):
+        # 通用图片/GIF（按扩展名）
+        if re.search(r"\.(?:gif|jpe?g|png|webp|bmp|avif)(?:\?|$)", url, re.I):
             info = await _download(s, url)
             if info:
                 info["source"] = url
                 return [info]
+        # 兜底：按 Content-Type 判断可直接下载的媒体
+        try:
+            async with s.head(url, proxy=PROXY, headers=HEADERS, allow_redirects=True) as r:
+                ct = r.headers.get("Content-Type", "")
+            if ct.startswith("image/") or ct.startswith("video/"):
+                info = await _download(s, url)
+                if info:
+                    info["source"] = url
+                    return [info]
+        except Exception:
+            pass
         return []
 
 
