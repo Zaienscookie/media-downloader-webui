@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>媒体下载 · Media Downloader</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #0B0F17; color: #E5E7EB; min-height: 100vh;
+    padding: 40px 16px;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+  h1 { font-size: 26px; font-weight: 700; margin-bottom: 6px; }
+  h1 span { background: linear-gradient(90deg,#fff,#3B82F6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .sub { color: #8B94A7; font-size: 13px; margin-bottom: 28px; }
+  .box {
+    display: flex; gap: 10px; background: #131A26; border: 1px solid #1F2937;
+    border-radius: 12px; padding: 10px; margin-bottom: 18px;
+  }
+  input {
+    flex: 1; background: transparent; border: none; outline: none;
+    color: #E5E7EB; font-size: 15px; padding: 10px;
+  }
+  input::placeholder { color: #5A657A; }
+  button {
+    background: #3B82F6; color: #fff; border: none; border-radius: 8px;
+    padding: 10px 22px; font-size: 15px; font-weight: 600; cursor: pointer;
+    transition: .15s; white-space: nowrap;
+  }
+  button:hover { background: #2563EB; }
+  button:disabled { background: #374151; cursor: not-allowed; }
+  #status { font-size: 14px; color: #8B94A7; min-height: 20px; margin-bottom: 18px; }
+  #status.err { color: #F87171; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
+  .card {
+    background: #131A26; border: 1px solid #1F2937; border-radius: 12px;
+    overflow: hidden; display: flex; flex-direction: column;
+  }
+  .card img, .card video { width: 100%; display: block; background: #000; max-height: 420px; object-fit: contain; }
+  .meta { padding: 10px 12px; display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #8B94A7; }
+  .dl {
+    color: #3B82F6; text-decoration: none; font-weight: 600;
+    border: 1px solid #3B82F6; border-radius: 6px; padding: 4px 12px; transition: .15s;
+  }
+  .dl:hover { background: #3B82F6; color: #fff; }
+  .spinner {
+    display: inline-block; width: 14px; height: 14px; border: 2px solid #3B82F6;
+    border-top-color: transparent; border-radius: 50%; animation: spin .7s linear infinite;
+    vertical-align: middle; margin-right: 8px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .tips { margin-top: 28px; font-size: 12px; color: #5A657A; line-height: 1.8; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>媒体<span>下载器</span></h1>
+  <div class="sub">支持 Twitter/X · Bluesky · YouTube · GIF/图片 · 走 clash 代理</div>
+
+  <div class="box">
+    <input id="url" placeholder="粘贴链接，如 https://x.com/xxx/status/123456" autofocus
+           onkeydown="if(event.key==='Enter')parse()">
+    <button id="btn" onclick="parse()">解析下载</button>
+  </div>
+
+  <div id="status"></div>
+  <div class="grid" id="results"></div>
+
+  <div class="tips">
+    · Twitter/X：自动处理引用转推、多图多视频，图片取高清<br>
+    · Bluesky：图片/视频全解析 · YouTube：yt-dlp 最高画质<br>
+    · 文件保存在服务器，点「下载」存到本机
+  </div>
+</div>
+
+<script>
+async function parse() {
+  const url = document.getElementById('url').value.trim();
+  const btn = document.getElementById('btn');
+  const status = document.getElementById('status');
+  const results = document.getElementById('results');
+  if (!url) { status.textContent = '请输入链接'; status.className = 'err'; return; }
+
+  btn.disabled = true;
+  results.innerHTML = '';
+  status.className = '';
+  status.innerHTML = '<span class="spinner"></span>解析下载中，请稍候（视频可能较慢）...';
+
+  try {
+    const res = await fetch('/api/parse', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({url})
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      status.textContent = '❌ ' + data.error;
+      status.className = 'err';
+      return;
+    }
+    status.textContent = `✅ 解析到 ${data.count} 个媒体`;
+    status.className = '';
+    data.media.forEach(m => {
+      const card = document.createElement('div');
+      card.className = 'card';
+      const el = m.type === 'video'
+        ? `<video src="${m.view}" controls preload="metadata"></video>`
+        : `<img src="${m.view}" loading="lazy">`;
+      const kb = (m.size / 1024).toFixed(0);
+      card.innerHTML = el + `
+        <div class="meta">
+          <span>${m.type === 'video' ? '🎬 视频' : '🖼️ 图片'} · ${kb} KB</span>
+          <a class="dl" href="${m.download}">下载</a>
+        </div>`;
+      results.appendChild(card);
+    });
+  } catch (e) {
+    status.textContent = '❌ 请求失败: ' + e;
+    status.className = 'err';
+  } finally {
+    btn.disabled = false;
+  }
+}
+</script>
+</body>
+</html>

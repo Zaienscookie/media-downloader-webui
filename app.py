@@ -1,0 +1,208 @@
+#!/usr/bin/env python3
+"""
+媒体下载 WebUI - 解析 Twitter/Bluesky/YouTube 链接并下载媒体
+复用 astrbot_plugin_media_bridge 的解析逻辑
+"""
+import os
+import re
+import uuid
+import asyncio
+import urllib.parse
+
+import aiohttp
+from flask import Flask, request, jsonify, send_file, render_template
+
+app = Flask(__name__)
+
+PROXY = os.environ.get("MEDIA_PROXY", "http://127.0.0.1:7890")
+DL_DIR = os.environ.get("MEDIA_DL_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), "downloads"))
+os.makedirs(DL_DIR, exist_ok=True)
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+}
+MAX_MB = int(os.environ.get("MEDIA_MAX_MB", "200"))
+
+
+async def _download(session, url, type_hint=""):
+    """下载到本地，返回文件名"""
+    try:
+        async with session.get(url, proxy=PROXY, headers=HEADERS) as resp:
+            if resp.status != 200:
+                return None
+            data = await resp.read()
+            if len(data) > MAX_MB * 1024 * 1024:
+                return None
+            ext = ""
+            if type_hint.lower() in ("video", "gif"):
+                ext = ".mp4"
+            elif type_hint.lower() in ("photo", "image"):
+                ext = ".jpg"
+            if not ext:
+                ct = resp.headers.get("Content-Type", "")
+                if "mp4" in ct or "video" in ct:
+                    ext = ".mp4"
+                elif "gif" in ct:
+                    ext = ".gif"
+                elif "png" in ct:
+                    ext = ".png"
+                elif "webp" in ct:
+                    ext = ".webp"
+                elif "jpeg" in ct or "jpg" in ct:
+                    ext = ".jpg"
+                else:
+                    ext = os.path.splitext(url.split("?")[0])[1] or ".bin"
+            fname = f"{uuid.uuid4().hex}{ext}"
+            with open(os.path.join(DL_DIR, fname), "wb") as f:
+                f.write(data)
+            return {"file": fname, "size": len(data), "type": "video" if ext in (".mp4", ".mov", ".webm", ".mkv") else "image"}
+    except Exception as e:
+        print(f"[download] {e}")
+        return None
+
+
+async def parse_twitter(session, url):
+    m = re.search(r"(?:twitter\.com|x\.com)/([^/]+)/status/(\d+)", url)
+    if not m:
+        return []
+    user, sid = m.group(1), m.group(2)
+    async with session.get(f"https://api.fxtwitter.com/{user}/status/{sid}", proxy=PROXY, headers=HEADERS) as r:
+        if r.status != 200:
+            return []
+        d = await r.json()
+    t = d.get("tweet", {})
+    medias = list(t.get("media", {}).get("all", []))
+    q = t.get("quote")
+    if isinstance(q, dict):
+        medias += list((q.get("media", {}) or {}).get("all", []))
+    results = []
+    for mm in medias:
+        mu = mm.get("url") or mm.get("media_url_https") or mm.get("thumbnail_url") or ""
+        if not mu:
+            continue
+        for a, b in (("name=small", "name=large"), ("name=medium", "name=large"), ("name=orig", "name=large")):
+            mu = mu.replace(a, b)
+        info = await _download(session, mu, mm.get("type", ""))
+        if info:
+            info["source"] = mu
+            results.append(info)
+    return results
+
+
+async def parse_bluesky(session, url):
+    m = re.search(r"/profile/([^/]+)/post/(\w+)", url)
+    if not m:
+        return []
+    handle, rkey = m.group(1), m.group(2)
+    async with session.get(f"https://public.api.bsky.app/xrpc/com.atproto.identity.resolveHandle?handle={handle}",
+                           proxy=PROXY, headers=HEADERS) as r:
+        if r.status != 200:
+            return []
+        did = (await r.json()).get("did", "")
+    if not did:
+        return []
+    uri = f"at://{did}/app.bsky.feed.post/{rkey}"
+    async with session.get(f"https://public.api.bsky.app/xrpc/app.bsky.feed.getPosts?uris={urllib.parse.quote(uri)}",
+                           proxy=PROXY, headers=HEADERS) as r:
+        if r.status != 200:
+            return []
+        posts = (await r.json()).get("posts", [])
+    if not posts:
+        return []
+    rec = posts[0].get("record", {})
+    embed = rec.get("embed", {}) or {}
+    et = embed.get("$type", "")
+    media = []
+    if et == "app.bsky.embed.images":
+        for img in embed.get("images", []):
+            blob = img.get("image", {})
+            cid = blob.get("ref", {}).get("$link", "")
+            ex = blob.get("mimeType", "image/jpeg").split("/")[-1]
+            if cid:
+                media.append((f"https://cdn.bsky.app/img/feed_fullsize/plain/{did}/{cid}@{ex}", "image"))
+    elif et == "app.bsky.embed.video":
+        blob = embed.get("video", {})
+        cid = blob.get("ref", {}).get("$link", "")
+        if cid:
+            media.append((f"https://cdn.bsky.app/img/feed_fullsize/plain/{did}/{cid}@mp4", "video"))
+    results = []
+    for mu, th in media:
+        info = await _download(session, mu, th)
+        if info:
+            info["source"] = mu
+            results.append(info)
+    return results
+
+
+async def parse_youtube(session, url):
+    # 用 yt-dlp 下载
+    out_tmpl = os.path.join(DL_DIR, f"yt_{uuid.uuid4().hex}.%(ext)s")
+    cmd = ["yt-dlp", "-f", "bv*+ba/b", "--merge-output-format", "mp4", "-o", out_tmpl,
+           "--no-playlist", "--max-filesize", f"{MAX_MB}M", "--proxy", PROXY, url]
+    proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
+    await asyncio.wait_for(proc.communicate(), timeout=600)
+    for f in os.listdir(DL_DIR):
+        if f.startswith("yt_"):
+            p = os.path.join(DL_DIR, f)
+            return [{"file": f, "size": os.path.getsize(p), "type": "video", "source": url}]
+    return []
+
+
+async def parse_all(url):
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=600)) as s:
+        if re.search(r"(?:twitter\.com|x\.com)/", url):
+            return await parse_twitter(s, url)
+        if re.search(r"(?:bsky\.app|bsky\.social)/", url):
+            return await parse_bluesky(s, url)
+        if re.search(r"(?:youtube\.com|youtu\.be)/", url):
+            return await parse_youtube(s, url)
+        # 通用图片/GIF
+        if re.search(r"\.(?:gif|jpe?g|png|webp)(?:\?|$)", url, re.I):
+            info = await _download(s, url)
+            if info:
+                info["source"] = url
+                return [info]
+        return []
+
+
+@app.route("/")
+def index():
+    return render_template("index.html")
+
+
+@app.route("/api/parse", methods=["POST"])
+def api_parse():
+    data = request.get_json(silent=True) or {}
+    url = (data.get("url") or "").strip()
+    if not url:
+        return jsonify({"ok": False, "error": "请输入链接"})
+    try:
+        media = asyncio.run(parse_all(url))
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"解析失败: {e}"})
+    if not media:
+        return jsonify({"ok": False, "error": "未解析到媒体（链接无效/无媒体/超限）"})
+    out = []
+    for m in media:
+        out.append({
+            "file": m["file"],
+            "type": m["type"],
+            "size": m["size"],
+            "view": f"/media/{m['file']}",
+            "download": f"/media/{m['file']}?dl=1",
+        })
+    return jsonify({"ok": True, "count": len(out), "media": out})
+
+
+@app.route("/media/<path:filename>")
+def media(filename):
+    path = os.path.join(DL_DIR, filename)
+    if not os.path.exists(path):
+        return "not found", 404
+    as_attachment = request.args.get("dl") == "1"
+    return send_file(path, as_attachment=as_attachment)
+
+
+if __name__ == "__main__":
+    app.run(host=os.environ.get("MEDIA_HOST", "0.0.0.0"), port=int(os.environ.get("MEDIA_PORT", "8891")), threaded=True)
