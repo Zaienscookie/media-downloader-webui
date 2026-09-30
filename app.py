@@ -97,11 +97,14 @@ async def parse_bluesky(session, url):
     if not m:
         return []
     handle, rkey = m.group(1), m.group(2)
-    async with session.get(f"https://public.api.bsky.app/xrpc/com.atproto.identity.resolveHandle?handle={handle}",
-                           proxy=PROXY, headers=HEADERS) as r:
-        if r.status != 200:
-            return []
-        did = (await r.json()).get("did", "")
+    if handle.startswith("did:"):
+        did = handle
+    else:
+        async with session.get(f"https://public.api.bsky.app/xrpc/com.atproto.identity.resolveHandle?handle={handle}",
+                               proxy=PROXY, headers=HEADERS) as r:
+            if r.status != 200:
+                return []
+            did = (await r.json()).get("did", "")
     if not did:
         return []
     uri = f"at://{did}/app.bsky.feed.post/{rkey}"
