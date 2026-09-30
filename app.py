@@ -149,11 +149,34 @@ async def parse_bluesky(session, url):
             media.append((f"https://cdn.bsky.app/img/feed_fullsize/plain/{did}/{cid}@jpeg", "image"))
     results = []
     for mu, th in media:
-        info = await _download(session, mu, th)
+        if th == "video" and mu.endswith(".m3u8"):
+            info = await _ytdlp_media(mu)
+        else:
+            info = await _download(session, mu, th)
         if info:
             info["source"] = mu
             results.append(info)
     return results
+
+
+async def _ytdlp_media(url):
+    """用 yt-dlp 下载 m3u8（Bluesky 视频）"""
+    out_tmpl = os.path.join(DL_DIR, f"dl_{uuid.uuid4().hex}.%(ext)s")
+    cmd = [YTDLP, "--proxy", PROXY, "--referer", "https://bsky.app/",
+           "--add-header", "Origin:https://bsky.app",
+           "-o", out_tmpl, "--no-playlist", url]
+    try:
+        proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
+        await asyncio.wait_for(proc.communicate(), timeout=300)
+    except Exception as e:
+        print("[ytdlp_media]", e)
+        return None
+    for f in os.listdir(DL_DIR):
+        if f.startswith("dl_"):
+            p = os.path.join(DL_DIR, f)
+            if os.path.getsize(p) > 0:
+                return {"file": f, "size": os.path.getsize(p), "type": "video"}
+    return None
 
 
 async def parse_youtube(session, url):
