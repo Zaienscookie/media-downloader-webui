@@ -10,10 +10,61 @@ import asyncio
 import urllib.parse
 
 import aiohttp
+import time
+import ipaddress
+import socket
+import hmac
+from urllib.parse import urlparse
 from flask import Flask, request, jsonify, send_file, render_template, session, redirect
 from functools import wraps
 
 app = Flask(__name__)
+
+# ============ 安全加固 ============
+ALLOW_PRIVATE = os.environ.get("MEDIA_ALLOW_PRIVATE", "0") == "1"
+MAX_FAILS = 5
+FAIL_WINDOW = 300
+_fails = {}
+
+
+def _is_safe_url(u):
+    """SSRF 防护：只允许 http/https 且非内网/保留地址"""
+    try:
+        p = urlparse(u)
+    except Exception:
+        return False
+    if p.scheme not in ("http", "https"):
+        return False
+    host = p.hostname
+    if not host:
+        return False
+    if ALLOW_PRIVATE:
+        return True
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except Exception:
+        return False
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except Exception:
+            continue
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
+            return False
+    return True
+
+
+def _rate_ok(ip):
+    now = time.time()
+    arr = [t for t in _fails.get(ip, []) if now - t < FAIL_WINDOW]
+    _fails[ip] = arr
+    return len(arr) < MAX_FAILS
+
+
+def _rate_fail(ip):
+    _fails.setdefault(ip, []).append(time.time())
+
+
 
 PROXY = os.environ.get("MEDIA_PROXY", "http://127.0.0.1:7890")
 import shutil as _shutil
@@ -225,7 +276,26 @@ async def parse_all(url):
         return []
 
 
-app.secret_key = os.environ.get("MEDIA_SECRET", "media-webui-secret-2026")
+_SECRET_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".secret")
+if os.environ.get("MEDIA_SECRET"):
+    app.secret_key = os.environ["MEDIA_SECRET"]
+else:
+    try:
+        app.secret_key = open(_SECRET_FILE).read().strip()
+    except Exception:
+        _s = os.urandom(32).hex()
+        try:
+            open(_SECRET_FILE, "w").write(_s)
+        except Exception:
+            pass
+        app.secret_key = _s
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=os.environ.get("MEDIA_COOKIE_SECURE", "0") == "1",
+    PERMANENT_SESSION_LIFETIME=3600 * 24,
+    MAX_CONTENT_LENGTH=2 * 1024 * 1024,
+)
 AUTH_USER = os.environ.get("MEDIA_USER", "debug")
 AUTH_PASS = os.environ.get("MEDIA_PASS", "Admin@123")
 
@@ -244,12 +314,18 @@ def login_required(f):
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
+        ip = request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
+        if not _rate_ok(ip):
+            return render_template("login.html", error="尝试次数过多，请 5 分钟后再试"), 429
         u = request.form.get("username", "")
         p = request.form.get("password", "")
-        if u == AUTH_USER and p == AUTH_PASS:
+        ok = hmac.compare_digest(u, AUTH_USER) and hmac.compare_digest(p, AUTH_PASS)
+        if ok:
             session["logged_in"] = True
             session.permanent = True
+            session["_ip"] = ip
             return redirect("/")
+        _rate_fail(ip)
         return render_template("login.html", error="用户名或密码错误")
     return render_template("login.html", error="")
 
@@ -264,6 +340,21 @@ def logout():
 @login_required
 def index():
     return render_template("index.html")
+
+
+
+
+def _cleanup_old():
+    """惰性清理：删除超过 KEEP_HOURS 的下载文件"""
+    hours = float(os.environ.get("MEDIA_KEEP_HOURS", "24"))
+    now = time.time()
+    for f in os.listdir(DL_DIR):
+        p = os.path.join(DL_DIR, f)
+        try:
+            if os.path.isfile(p) and now - os.path.getmtime(p) > hours * 3600:
+                os.remove(p)
+        except Exception:
+            pass
 
 
 def _fmt(media):
@@ -286,6 +377,7 @@ def api_parse():
     raw = (data.get("urls") or data.get("url") or "").strip()
     if not raw:
         return jsonify({"ok": False, "error": "请输入链接"})
+    _cleanup_old()
     urls = re.findall(r"https?://[^\s,，、]+", raw)
     seen = set(); uniq = []
     for u in urls:
@@ -295,6 +387,13 @@ def api_parse():
         return jsonify({"ok": False, "error": "未识别到有效链接"})
     all_media = []
     errors = []
+    safe = []
+    for u in uniq:
+        if _is_safe_url(u):
+            safe.append(u)
+        else:
+            errors.append({"url": u, "error": "已拦截：内网/非法地址"})
+    uniq = safe
     for u in uniq:
         try:
             media = asyncio.run(parse_all(u))
@@ -310,10 +409,26 @@ def api_parse():
                     "total_urls": len(uniq), "errors": errors})
 
 
+@app.after_request
+def _sec_headers(resp):
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["X-Frame-Options"] = "DENY"
+    resp.headers["Referrer-Policy"] = "no-referrer"
+    resp.headers["Content-Security-Policy"] = "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:"
+    try:
+        del resp.headers["Server"]
+    except Exception:
+        pass
+    return resp
+
+
 @app.route("/media/<path:filename>")
 @login_required
 def media(filename):
-    path = os.path.join(DL_DIR, filename)
+    safe = os.path.basename(filename)
+    path = os.path.join(DL_DIR, safe)
+    if not os.path.abspath(path).startswith(os.path.abspath(DL_DIR)):
+        return "forbidden", 403
     if not os.path.exists(path):
         return "not found", 404
     as_attachment = request.args.get("dl") == "1"
