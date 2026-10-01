@@ -10,7 +10,8 @@ import asyncio
 import urllib.parse
 
 import aiohttp
-from flask import Flask, request, jsonify, send_file, render_template
+from flask import Flask, request, jsonify, send_file, render_template, session, redirect
+from functools import wraps
 
 app = Flask(__name__)
 
@@ -224,7 +225,43 @@ async def parse_all(url):
         return []
 
 
+app.secret_key = os.environ.get("MEDIA_SECRET", "media-webui-secret-2026")
+AUTH_USER = os.environ.get("MEDIA_USER", "debug")
+AUTH_PASS = os.environ.get("MEDIA_PASS", "Admin@123")
+
+
+def login_required(f):
+    @wraps(f)
+    def _w(*a, **kw):
+        if not session.get("logged_in"):
+            if request.path.startswith("/api/"):
+                return jsonify({"ok": False, "error": "未登录", "need_login": True}), 401
+            return redirect("/login")
+        return f(*a, **kw)
+    return _w
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        u = request.form.get("username", "")
+        p = request.form.get("password", "")
+        if u == AUTH_USER and p == AUTH_PASS:
+            session["logged_in"] = True
+            session.permanent = True
+            return redirect("/")
+        return render_template("login.html", error="用户名或密码错误")
+    return render_template("login.html", error="")
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect("/login")
+
+
 @app.route("/")
+@login_required
 def index():
     return render_template("index.html")
 
@@ -243,6 +280,7 @@ def _fmt(media):
 
 
 @app.route("/api/parse", methods=["POST"])
+@login_required
 def api_parse():
     data = request.get_json(silent=True) or {}
     raw = (data.get("urls") or data.get("url") or "").strip()
@@ -273,6 +311,7 @@ def api_parse():
 
 
 @app.route("/media/<path:filename>")
+@login_required
 def media(filename):
     path = os.path.join(DL_DIR, filename)
     if not os.path.exists(path):
