@@ -4,3 +4,5 @@ downloads/
 venv/
 .env
 app.log
+
+.secret
