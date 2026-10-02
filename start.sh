@@ -21,6 +21,7 @@ source venv/bin/activate
 echo "==> 安装依赖..."
 pip install -q --upgrade pip
 pip install -q -r requirements.txt
+pip install -q yt-dlp 2>/dev/null || echo "⚠️  yt-dlp 安装失败（YouTube功能不可用）"
 
 # 可选依赖提示
 command -v ffmpeg >/dev/null 2>&1 || echo "⚠️  未检测到 ffmpeg（视频转码需要，可选）"

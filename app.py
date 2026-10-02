@@ -68,7 +68,7 @@ def _rate_fail(ip):
 
 PROXY = os.environ.get("MEDIA_PROXY", "http://127.0.0.1:7890")
 import shutil as _shutil
-YTDLP = _shutil.which("yt-dlp") or "/home/debug/qqbot/qqbot/new-zaiens/astrbot/.venv/bin/yt-dlp"
+YTDLP = _shutil.which("yt-dlp") or os.environ.get("MEDIA_YTDLP", "yt-dlp")
 DL_DIR = os.environ.get("MEDIA_DL_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), "downloads"))
 os.makedirs(DL_DIR, exist_ok=True)
 
@@ -219,7 +219,7 @@ async def _ytdlp_media(url):
     out_tmpl = os.path.join(DL_DIR, f"dl_{uuid.uuid4().hex}.%(ext)s")
     cmd = [YTDLP, "--proxy", PROXY, "--referer", "https://bsky.app/",
            "--add-header", "Origin:https://bsky.app",
-           "-o", out_tmpl, "--no-playlist", url]
+           "--no-part", "-o", out_tmpl, "--no-playlist", url]
     try:
         proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
         await asyncio.wait_for(proc.communicate(), timeout=300)
@@ -227,7 +227,7 @@ async def _ytdlp_media(url):
         print("[ytdlp_media]", e)
         return None
     for f in os.listdir(DL_DIR):
-        if f.startswith("dl_"):
+        if f.startswith("dl_") and not f.endswith(".part"):
             p = os.path.join(DL_DIR, f)
             if os.path.getsize(p) > 0:
                 return {"file": f, "size": os.path.getsize(p), "type": "video"}
@@ -237,12 +237,12 @@ async def _ytdlp_media(url):
 async def parse_youtube(session, url):
     # 用 yt-dlp 下载
     out_tmpl = os.path.join(DL_DIR, f"yt_{uuid.uuid4().hex}.%(ext)s")
-    cmd = [YTDLP, "-f", "bv*+ba/b", "--merge-output-format", "mp4", "-o", out_tmpl,
+    cmd = [YTDLP, "--no-part", "-f", "bv*+ba/b", "--merge-output-format", "mp4", "-o", out_tmpl,
            "--no-playlist", "--max-filesize", f"{MAX_MB}M", "--proxy", PROXY, url]
     proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
     await asyncio.wait_for(proc.communicate(), timeout=600)
     for f in os.listdir(DL_DIR):
-        if f.startswith("yt_"):
+        if f.startswith("yt_") and not f.endswith(".part"):
             p = os.path.join(DL_DIR, f)
             return [{"file": f, "size": os.path.getsize(p), "type": "video", "source": url}]
     return []
