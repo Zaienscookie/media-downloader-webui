@@ -1,6 +1,13 @@
 # 媒体下载项目 · 进度状态（暂停点）
 
-> 暂停时间：2026-09-30 17:42
+> 更新时间：2026-10-03 17:00（APK 构建完成）
+
+## 最新进展（2026-10-03）
+- ✅ **Android App 本地构建成功**：`/home/debug/media-downloader-app/dist/media-downloader-app-debug.apk`（27K，`com.zaiens.mediadl`，minSdk21/target34）
+- ✅ **App 交互＝8891 旧版**：多行批量粘贴 → 自动拆分链接 → 解析并直接下载到系统「下载」目录 → 卡片展示结果（非勾选模式）
+- ✅ **下载走手机网络 + 本地代理**：HttpURLConnection 直连源站（不经服务器），新增显式读取系统代理（clash 的 host:port）并应用到连接，TUN/系统代理模式均生效
+- ✅ 同步 GitHub：已推 `origin/main`；`build.yml` 因 token 缺 `workflow` scope 暂不入库
+- 🛠 环境：Gradle 8.7（`/opt/gradle-8.7`）、Android SDK（platforms;android-34、build-tools;34.0.0、platform-tools）已装
 
 ## 一、项目概览
 两个子项目：
@@ -25,7 +32,9 @@
 ## 三、Android App（待构建 APK）
 
 - **目录**：`/home/debug/media-downloader-app/`
-- **GitHub**：https://github.com/Zaienscookie/media-downloader-app（仓库已建；`.github/workflows/build.yml` 未推送）
+- **GitHub**：https://github.com/Zaienscookie/media-downloader-app（**已同步**；`.github/workflows/build.yml` 因 token 缺 `workflow` scope 未入库）
+- **APK**：✅ **已构建** → `dist/media-downloader-app-debug.apk`（批量粘贴解析下载 + 手机本地代理）
+- **界面**：8891 旧版交互（多行批量粘贴→拆分→直接下载→卡片结果）
 - **设计**：**原生 App**（非 WebView 壳）— App 内直接请求 fxtwitter/Bluesky API，用**手机网络**下载到系统「下载」目录；手机开 clash 全局即走代理
 - **文件**：
   - `app/src/main/java/com/zaiens/mediadl/MainActivity.java`（原生下载器，9.2KB）
