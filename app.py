@@ -69,6 +69,7 @@ def _rate_fail(ip):
 PROXY = os.environ.get("MEDIA_PROXY", "http://127.0.0.1:7890")
 import shutil as _shutil
 YTDLP = _shutil.which("yt-dlp") or os.environ.get("MEDIA_YTDLP", "yt-dlp")
+COOKIES_FILE = os.environ.get("MEDIA_COOKIES", os.path.join(os.path.dirname(os.path.abspath(__file__)), "cookies.txt"))
 DL_DIR = os.environ.get("MEDIA_DL_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), "downloads"))
 os.makedirs(DL_DIR, exist_ok=True)
 
@@ -219,7 +220,7 @@ async def _ytdlp_media(url):
     out_tmpl = os.path.join(DL_DIR, f"dl_{uuid.uuid4().hex}.%(ext)s")
     cmd = [YTDLP, "--proxy", PROXY, "--referer", "https://bsky.app/",
            "--add-header", "Origin:https://bsky.app",
-           "--no-part", "-o", out_tmpl, "--no-playlist", url]
+           "--no-part", "-o", out_tmpl, "--no-playlist"] + (["--cookies", COOKIES_FILE] if os.path.exists(COOKIES_FILE) else []) + [url]
     try:
         proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
         await asyncio.wait_for(proc.communicate(), timeout=300)
